@@ -15,7 +15,7 @@ import json
 import logging
 import sys
 import zipfile
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 from garminconnect import Garmin, GarminConnectAuthenticationError
@@ -42,6 +42,8 @@ from .client import (
 from .envfile import apply_env_file
 from .stage import build_staged
 
+logger = logging.getLogger(__name__)
+
 
 def _out_json(data) -> None:
     json.dump(data, sys.stdout, indent=2, default=str)
@@ -50,13 +52,19 @@ def _out_json(data) -> None:
 
 def _date(value: str | None) -> str:
     if value is None:
-        return date.today().isoformat()
-    return datetime.strptime(value, "%Y-%m-%d").date().isoformat()
+        return datetime.now(UTC).date().isoformat()
+    return date.fromisoformat(value).isoformat()
 
 
 def _fail(message: str, code: int = EXIT_ERROR) -> int:
     print(f"garmin-cli: {message}", file=sys.stderr)
     return code
+
+
+def _mcp_empty_response(data, path: str):
+    if data is None:
+        return {"noData": True, "status": 204, "path": path}
+    return data
 
 
 # ── command handlers ──────────────────────────────────────────────────
@@ -92,9 +100,10 @@ def cmd_activities(args) -> int:
                 fit_name = next(name for name in bundle.namelist() if name.lower().endswith(".fit"))
                 payload = bundle.read(fit_name)
             output_path = output_dir / f"{args.activity_id}.fit"
-        except (zipfile.BadZipFile, StopIteration):
-            payload = archive
-            output_path = output_dir / f"{args.activity_id}.zip"
+        except zipfile.BadZipFile as exc:
+            raise ValueError("activity download was not a ZIP archive") from exc
+        except StopIteration as exc:
+            raise ValueError("ZIP archive did not contain a .fit file") from exc
         output_path.write_bytes(payload)
         _out_json({"path": str(output_path), "bytes": len(payload)})
         return EXIT_OK
@@ -200,9 +209,14 @@ def cmd_workouts(args) -> int:
             workout = json.loads(Path(args.file).read_text(encoding="utf-8"))
         else:
             workout = json.loads(args.json)
-        data = garmin.upload_workout(workout)
+        data = _mcp_empty_response(
+            garmin.upload_workout(workout), "workout-service/workout"
+        )
     elif cmd == "schedule":
-        data = garmin.schedule_workout(str(args.workout_id), _date(args.date))
+        data = _mcp_empty_response(
+            garmin.schedule_workout(str(args.workout_id), _date(args.date)),
+            f"workout-service/schedule/{args.workout_id}",
+        )
     elif cmd == "delete":
         garmin.delete_workout(str(args.workout_id))
         data = {"workoutId": str(args.workout_id), "deleted": True}
@@ -229,7 +243,26 @@ CAPABILITIES = [
 
 
 def cmd_run_tests(_args) -> int:
-    _out_json({"total": len(CAPABILITIES), "capabilities": CAPABILITIES})
+    test_plan = "\n".join(
+        [
+            "# garmin-cli Test Plan",
+            "",
+            "Call check-session first. If it fails, call garmin-login to authenticate.",
+            "Execute each capability below and verify it returns valid data (not an error).",
+            "",
+            *[f"- {capability}" for capability in CAPABILITIES if capability != "run-tests"],
+            "",
+            "Present results as a markdown table: | Tool | Status | Notes |",
+            "Count total passed vs failed at the end.",
+        ]
+    )
+    _out_json(
+        {
+            "total": len(CAPABILITIES),
+            "capabilities": CAPABILITIES,
+            "testPlan": test_plan,
+        }
+    )
     return EXIT_OK
 
 
@@ -284,7 +317,11 @@ def cmd_weight(args) -> int:
         start = _date(args.start)
     else:
         start = (date.fromisoformat(end) - timedelta(days=30)).isoformat()
-    data = raw_get(garmin, f"weight-service/weight/range/{start}/{end}")
+    data = raw_get(
+        garmin,
+        f"weight-service/weight/range/{start}/{end}",
+        {"includeAll": "true"},
+    )
     _out_json(data)
     return EXIT_OK
 
@@ -501,11 +538,19 @@ def main(argv=None) -> int:
         import os
 
         os.environ["GARMIN_CLI_TOKENSTORE"] = args.tokenstore
-    if getattr(args, "date", None) is not None:
+    for field in ("date", "start", "end", "start_date", "end_date"):
+        value = getattr(args, field, None)
+        if value is None or not isinstance(value, str):
+            continue
         try:
-            _date(args.date)
+            _date(value)
         except ValueError:
-            return _fail(f"invalid date (want YYYY-MM-DD): {args.date}", 2)
+            print(
+                f"garmin-cli: invalid --{field.replace('_', '-')}: {value} "
+                "(expected YYYY-MM-DD)",
+                file=sys.stderr,
+            )
+            return 2
     if args.env_file:
         try:
             apply_env_file(args.env_file)
@@ -521,9 +566,9 @@ def main(argv=None) -> int:
         return _fail(str(exc), EXIT_AUTH_REQUIRED)
     except GarminConnectAuthenticationError as exc:
         return _fail(f"authentication error: {exc}", EXIT_AUTH_REQUIRED)
-    except Exception as exc:  # noqa: BLE001 — CLI boundary
+    except Exception as exc:
         if args.verbose:
-            logging.exception("command failed")
+            logger.exception("command failed")
         return _fail(f"{type(exc).__name__}: {exc}", EXIT_ERROR)
 
 

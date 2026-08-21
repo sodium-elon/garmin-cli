@@ -100,7 +100,7 @@ def login_and_save() -> Garmin:
         waiter = OtpWaiter(email, app_password)
         waiter.arm()
 
-        def prompt_mfa() -> str:  # noqa: F811 — armed variant shadows the fallback
+        def prompt_mfa() -> str:
             code = waiter.wait()
             print("garmin-cli: OTP code obtained from email", file=sys.stderr)
             return code
@@ -119,7 +119,7 @@ def check_session(verbose: bool = False) -> dict:
     """Cheap authenticated probe mirroring garmin-mcp's check-session."""
     garmin = connect()
     profile = get_user_profile(garmin)
-    result = {"status": "ok", "userId": profile.get("id")}
+    result = {"status": "ok", "profile": profile}
     if verbose:
         result["tokenstore"] = str(tokenstore_path())
     return result
@@ -136,8 +136,7 @@ def raw_get(garmin: Garmin, path: str, params: dict | None = None):
     service path too — both end up at the same URL).
     """
     normalized = path.lstrip("/")
-    if normalized.startswith("connectapi/"):
-        normalized = normalized[len("connectapi/"):]
+    normalized = normalized.removeprefix("connectapi/")
     return garmin.connectapi("/" + normalized, params=params or None)
 
 

@@ -6,11 +6,29 @@ import tempfile
 import unittest
 import zipfile
 from contextlib import redirect_stdout
+from datetime import datetime as RealDatetime
 from pathlib import Path
 from unittest.mock import ANY, Mock, patch
 
 from garmin_cli.client import get_display_name
-from garmin_cli.main import main
+from garmin_cli.main import _date, main
+
+
+class DateContractTests(unittest.TestCase):
+    def test_default_date_uses_utc_like_mcp(self):
+        fake_datetime = Mock(wraps=RealDatetime)
+        fake_datetime.now.return_value = RealDatetime.fromisoformat("2030-01-02T00:30:00+00:00")
+        with patch("garmin_cli.main.datetime", fake_datetime):
+            self.assertEqual("2030-01-02", _date(None))
+
+    def test_range_dates_fail_as_usage_errors_before_connecting(self):
+        for argv in (
+            ["fitness", "stats", "not-a-date", "2026-08-01"],
+            ["weight", "--start", "2026-07-01", "--end", "not-a-date"],
+        ):
+            with self.subTest(argv=argv), patch("garmin_cli.main.connect") as connect:
+                self.assertEqual(2, main(argv))
+                connect.assert_not_called()
 
 
 class DisplayNameTests(unittest.TestCase):
@@ -19,6 +37,17 @@ class DisplayNameTests(unittest.TestCase):
         with patch("garmin_cli.client.raw_get", return_value={"displayName": "runner"}) as raw:
             self.assertEqual("runner", get_display_name(garmin))
         raw.assert_called_once_with(garmin, "userprofile-service/userprofile/settings")
+
+    def test_check_session_preserves_mcp_profile_envelope(self):
+        garmin = Mock()
+        profile = {"id": 42, "displayName": "runner"}
+        with (
+            patch("garmin_cli.client.connect", return_value=garmin),
+            patch("garmin_cli.client.get_user_profile", return_value=profile),
+        ):
+            from garmin_cli.client import check_session
+
+            self.assertEqual({"status": "ok", "profile": profile}, check_session())
 
 
 class ReadCommandTests(unittest.TestCase):
@@ -79,6 +108,18 @@ class ReadCommandTests(unittest.TestCase):
             main(["fitness", "calendar", "2026", "12"])
         self.assertEqual(2, raised.exception.code)
 
+    def test_weight_includes_all_measurements_like_mcp(self):
+        code, data, raw_get, _ = self.run_cli(
+            ["weight", "--start", "2026-07-01", "--end", "2026-08-01"], []
+        )
+        self.assertEqual(0, code)
+        self.assertEqual([], data)
+        raw_get.assert_called_once_with(
+            ANY,
+            "weight-service/weight/range/2026-07-01/2026-08-01",
+            {"includeAll": "true"},
+        )
+
 
 class DownloadCommandTests(unittest.TestCase):
     def test_activity_fit_download_extracts_original_zip(self):
@@ -96,6 +137,19 @@ class DownloadCommandTests(unittest.TestCase):
             self.assertEqual(b"FIT-ACTIVITY", Path(result["path"]).read_bytes())
             self.assertEqual(12, result["bytes"])
             self.assertEqual("99.fit", Path(result["path"]).name)
+
+    def test_activity_fit_download_rejects_archives_without_fit_data(self):
+        archive = io.BytesIO()
+        with zipfile.ZipFile(archive, "w") as zf:
+            zf.writestr("activity.tcx", b"NOT-FIT")
+        garmin = Mock()
+        garmin.download_activity.return_value = archive.getvalue()
+        with tempfile.TemporaryDirectory() as directory, patch("garmin_cli.main.connect", return_value=garmin):
+            self.assertEqual(
+                1,
+                main(["activities", "download-fit", "99", "--output-dir", directory]),
+            )
+            self.assertEqual([], list(Path(directory).iterdir()))
 
     def test_workout_fit_download_writes_bytes(self):
         garmin = Mock()
@@ -134,6 +188,22 @@ class WorkoutMutationTests(unittest.TestCase):
         garmin.schedule_workout.assert_called_once_with("42", "2026-08-22")
         garmin.delete_workout.assert_called_once_with("42")
 
+    def test_schedule_empty_response_preserves_mcp_no_data_envelope(self):
+        garmin = Mock()
+        garmin.schedule_workout.return_value = None
+        with patch("garmin_cli.main.connect", return_value=garmin):
+            output = io.StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(0, main(["workouts", "schedule", "42", "2026-08-22"]))
+        self.assertEqual(
+            {
+                "noData": True,
+                "status": 204,
+                "path": "workout-service/schedule/42",
+            },
+            json.loads(output.getvalue()),
+        )
+
     def test_create_accepts_inline_json(self):
         garmin = Mock()
         garmin.upload_workout.return_value = {"workoutId": 7}
@@ -153,6 +223,8 @@ class TestPlanCommandTests(unittest.TestCase):
         self.assertEqual(41, len(result["capabilities"]))
         self.assertIn("get-power-zones", result["capabilities"])
         self.assertIn("delete-workout", result["capabilities"])
+        self.assertIn("Call check-session first", result["testPlan"])
+        self.assertIn("| Tool | Status | Notes |", result["testPlan"])
 
 
 if __name__ == "__main__":

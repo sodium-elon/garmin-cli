@@ -11,7 +11,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from garmin_cli.mfa import extract_code, _strip_html
+from garmin_cli.mfa import _strip_html, extract_code
 from garmin_cli.stage import build_staged, find_activity, latest_running, stage_activity
 
 LIST_ITEM = {

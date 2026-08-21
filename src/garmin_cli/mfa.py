@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 IMAP_HOST = "imap.gmail.com"
 GARMIN_SENDER = "alerts@account.garmin.com"
 GARMIN_SUBJECT = "Your Security Passcode"
-CODE_PATTERN = re.compile(r"one-time code for your account\D{0,120}(\d{6})", re.I)
+CODE_PATTERN = re.compile(r"one-time code for your account\D{0,120}(\d{6})", re.IGNORECASE)
 DEFAULT_TIMEOUT_SECONDS = 180.0
 POLL_SECONDS = 5.0
 
@@ -44,6 +44,7 @@ def _decode_str(value: str | None) -> str:
     try:
         return str(make_header(decode_header(value)))
     except Exception:
+        logger.debug("Could not decode email header; using raw value", exc_info=True)
         return str(value)
 
 
@@ -77,7 +78,7 @@ def _strip_html(raw: str) -> str:
         r"<(?:head|style|script|template|noscript)\b[^>]*>[\s\S]*?</(?:head|style|script|template|noscript)\s*>",
         " ",
         visible,
-        flags=re.I,
+        flags=re.IGNORECASE,
     )
     visible = re.sub(r"<[^>]+>", " ", visible)
     return html.unescape(visible)
@@ -145,7 +146,7 @@ class OtpWaiter:
             try:
                 mail.logout()
             except Exception:
-                pass
+                logger.debug("IMAP logout failed during OTP arming", exc_info=True)
 
     def wait(self, timeout: float = DEFAULT_TIMEOUT_SECONDS) -> str:
         """Poll until a matching fresh OTP email arrives; return the code."""
@@ -192,7 +193,7 @@ class OtpWaiter:
             try:
                 mail.logout()
             except Exception:
-                pass
+                logger.debug("IMAP logout failed after OTP collection", exc_info=True)
 
 
 def fetch_code(email_address: str, app_password: str, timeout: float = DEFAULT_TIMEOUT_SECONDS) -> str:
