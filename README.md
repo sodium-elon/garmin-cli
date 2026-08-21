@@ -78,10 +78,32 @@ garmin-cli --env-file ../env-profiles/local.env stage --latest-running \
   -o /path/to/garmin-staged.json
 ```
 
-## Why a CLI (and why the MCP stays)
+## Full MCP-equivalent surface
 
-Consumer-first analysis lives in the workspace `INVESTIGATION.md`. Short
-version: every *local* consumer of Garmin data is an inner-loop consumer
-(personal, fast, exit-code driven); external npm consumers of the MCP package
-run their own server instance and never needed the local daemon. Both
-interfaces coexist; consumers migrate when they choose to.
+`garmin-cli run-tests` prints the complete 41-capability inventory. The 20 capabilities that were previously MCP-only are available through:
+
+```text
+garmin-cli activities download-fit <activity-id> [--output-dir DIR]
+garmin-cli fitness personal-records|stats|vo2max|hr-zones|goals|badges|badge-leaderboard|power-zones
+garmin-cli fitness training-readiness|hydration YYYY-MM-DD
+garmin-cli fitness sleep-stats START_DATE END_DATE
+garmin-cli fitness calendar YEAR ZERO_BASED_MONTH
+garmin-cli workouts list|get|download-fit|create|schedule|delete ...
+garmin-cli run-tests
+```
+
+All commands preserve the JSON-stdout, diagnostics-stderr, and `0`/`1`/`2`/`75` exit-code contract. Sleep ranges may contain at most 28 inclusive calendar dates. Use `--tokenstore /home/john/.garmin-cli/tokens` under isolated Hermes profiles.
+
+## Development
+
+```bash
+.venv/bin/python -m unittest tests.test_stage tests.test_commands -v
+.venv/bin/python -m compileall -q src tests
+```
+
+## Why a CLI (and why the MCP remains installed as rollback)
+
+Consumer-first analysis lives in the workspace `INVESTIGATION.md`. Local
+consumers now use the CLI for fast, exit-code-driven workflows. The MCP package
+remains installed and manually startable as a rollback, but local autostart is
+not required after migration.

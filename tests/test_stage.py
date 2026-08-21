@@ -4,13 +4,15 @@ from __future__ import annotations
 
 import json
 import sys
+import threading
+import time
 import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from garmin_cli.mfa import extract_code, _strip_html
-from garmin_cli.stage import build_staged, latest_running
+from garmin_cli.stage import build_staged, find_activity, latest_running, stage_activity
 
 LIST_ITEM = {
     "activityId": 23237542145,
@@ -40,7 +42,36 @@ class FakeGarmin:
         return DETAIL
 
 
+class ConcurrencyTrackingGarmin(FakeGarmin):
+    def __init__(self):
+        super().__init__()
+        self.active_calls = 0
+        self.max_active_calls = 0
+        self.lock = threading.Lock()
+
+    def connectapi(self, path, params=None):
+        with self.lock:
+            self.active_calls += 1
+            self.max_active_calls = max(self.max_active_calls, self.active_calls)
+        try:
+            time.sleep(0.05)
+            return super().connectapi(path, params=params)
+        finally:
+            with self.lock:
+                self.active_calls -= 1
+
+
 class TestStage(unittest.TestCase):
+    def test_stage_activity_fetches_resources_concurrently(self):
+        fake = ConcurrencyTrackingGarmin()
+
+        staged = stage_activity(fake, LIST_ITEM)
+
+        self.assertEqual(staged["detail"], DETAIL)
+        self.assertEqual(staged["splits"], SPLITS)
+        self.assertEqual(staged["hrZones"], HR_ZONES)
+        self.assertEqual(fake.max_active_calls, 3)
+
     def test_build_staged_latest_running_shape(self):
         fake = FakeGarmin()
         staged = build_staged(fake)
@@ -75,6 +106,20 @@ class TestStage(unittest.TestCase):
         fake = FakeGarmin(list_result=[cycling])
         with self.assertRaises(RuntimeError):
             latest_running(fake)
+
+    def test_find_activity_pages_until_full_list_item_is_found(self):
+        older = {**LIST_ITEM, "activityId": 99, "powerTimeInZone_1": 321.0}
+
+        class PaginatedGarmin(FakeGarmin):
+            def connectapi(self, path, params=None):
+                if "activitylist-service" in path:
+                    self.calls.append(path)
+                    return [LIST_ITEM] if params["start"] == 0 else [older]
+                return super().connectapi(path, params=params)
+
+        fake = PaginatedGarmin()
+
+        self.assertEqual(find_activity(fake, "99", max_pages=2), older)
 
     def test_staged_json_serializable(self):
         staged = build_staged(FakeGarmin())

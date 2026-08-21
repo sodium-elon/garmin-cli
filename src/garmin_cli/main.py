@@ -10,12 +10,15 @@ Conventions (agent- and script-friendly):
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import logging
 import sys
+import zipfile
 from datetime import date, datetime, timedelta
+from pathlib import Path
 
-from garminconnect import GarminConnectAuthenticationError
+from garminconnect import Garmin, GarminConnectAuthenticationError
 
 from . import __version__
 from .client import (
@@ -35,7 +38,6 @@ from .client import (
     list_activities,
     login_and_save,
     raw_get,
-    tokenstore_path,
 )
 from .envfile import apply_env_file
 from .stage import build_staged
@@ -79,6 +81,23 @@ def cmd_activities(args) -> int:
     garmin = connect()
     if args.activities_cmd == "list":
         data = list_activities(garmin, limit=args.limit, start=args.start)
+    elif args.activities_cmd == "download-fit":
+        archive = garmin.download_activity(
+            str(args.activity_id), dl_fmt=Garmin.ActivityDownloadFormat.ORIGINAL
+        )
+        output_dir = Path(args.output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            with zipfile.ZipFile(io.BytesIO(archive)) as bundle:
+                fit_name = next(name for name in bundle.namelist() if name.lower().endswith(".fit"))
+                payload = bundle.read(fit_name)
+            output_path = output_dir / f"{args.activity_id}.fit"
+        except (zipfile.BadZipFile, StopIteration):
+            payload = archive
+            output_path = output_dir / f"{args.activity_id}.zip"
+        output_path.write_bytes(payload)
+        _out_json({"path": str(output_path), "bytes": len(payload)})
+        return EXIT_OK
     else:
         activity_id = str(args.activity_id)
         if args.activities_cmd == "get":
@@ -103,6 +122,115 @@ def get_activity_raw(garmin, activity_id):
     from .client import get_activity
 
     return get_activity(garmin, activity_id)
+
+
+def cmd_fitness(args) -> int:
+    garmin = connect()
+    cmd = args.fitness_cmd
+    if cmd == "personal-records":
+        data = raw_get(
+            garmin,
+            f"personalrecord-service/personalrecord/prs/{get_display_name(garmin)}",
+            {"includeHistory": "true"},
+        )
+    elif cmd == "stats":
+        data = raw_get(
+            garmin,
+            "fitnessstats-service/activity",
+            {
+                "aggregation": args.aggregation,
+                "startDate": _date(args.start_date),
+                "endDate": _date(args.end_date),
+                "groupByActivityType": "true",
+                "standardizedUnits": "true",
+                "groupByParentActivityType": "false",
+                "userFirstDay": "sunday",
+                "metric": args.metric,
+            },
+        )
+    elif cmd == "vo2max":
+        data = raw_get(garmin, f"metrics-service/metrics/maxmet/latest/{_date(args.date)}")
+    elif cmd == "hr-zones":
+        data = raw_get(garmin, "biometric-service/heartRateZones/")
+    elif cmd == "training-readiness":
+        data = raw_get(garmin, f"metrics-service/metrics/trainingreadiness/{_date(args.date)}")
+    elif cmd == "sleep-stats":
+        data = raw_get(
+            garmin,
+            f"sleep-service/stats/sleep/daily/{_date(args.start_date)}/{_date(args.end_date)}",
+        )
+    elif cmd == "calendar":
+        data = raw_get(garmin, f"calendar-service/year/{args.year}/month/{args.month}")
+    elif cmd == "goals":
+        data = raw_get(garmin, "goal-service/goal/goals", {"status": args.status})
+    elif cmd == "badges":
+        data = raw_get(garmin, "badge-service/badge/earned")
+    elif cmd == "badge-leaderboard":
+        data = raw_get(garmin, "badge-service/badge/leaderboard", {"limit": args.limit})
+    elif cmd == "hydration":
+        data = raw_get(
+            garmin, f"usersummary-service/usersummary/hydration/allData/{_date(args.date)}"
+        )
+    elif cmd == "power-zones":
+        data = raw_get(garmin, "biometric-service/powerZones/sports/all")
+    else:  # pragma: no cover
+        return _fail(f"unknown fitness subcommand: {cmd}", 2)
+    _out_json(data)
+    return EXIT_OK
+
+
+def cmd_workouts(args) -> int:
+    garmin = connect()
+    cmd = args.workouts_cmd
+    if cmd == "list":
+        data = raw_get(
+            garmin, "workout-service/workouts", {"start": args.start, "limit": args.limit}
+        )
+    elif cmd == "get":
+        data = raw_get(garmin, f"workout-service/workout/{args.workout_id}")
+    elif cmd == "download-fit":
+        payload = garmin.download_workout(str(args.workout_id))
+        output_dir = Path(args.output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_path = output_dir / f"workout_{args.workout_id}.fit"
+        output_path.write_bytes(payload)
+        data = {"path": str(output_path), "bytes": len(payload)}
+    elif cmd == "create":
+        if args.file:
+            workout = json.loads(Path(args.file).read_text(encoding="utf-8"))
+        else:
+            workout = json.loads(args.json)
+        data = garmin.upload_workout(workout)
+    elif cmd == "schedule":
+        data = garmin.schedule_workout(str(args.workout_id), _date(args.date))
+    elif cmd == "delete":
+        garmin.delete_workout(str(args.workout_id))
+        data = {"workoutId": str(args.workout_id), "deleted": True}
+    else:  # pragma: no cover
+        return _fail(f"unknown workouts subcommand: {cmd}", 2)
+    _out_json(data)
+    return EXIT_OK
+
+
+CAPABILITIES = [
+    "garmin-login", "check-session", "list-activities", "get-activity",
+    "get-activity-details", "get-activity-splits", "get-activity-hr-zones",
+    "get-activity-polyline", "get-activity-weather", "download-fit",
+    "get-daily-summary", "get-daily-heart-rate", "get-daily-stress",
+    "get-daily-summary-chart", "get-daily-intensity-minutes", "get-daily-movement",
+    "get-daily-respiration", "get-sleep", "get-body-battery", "get-hrv",
+    "get-weight", "get-personal-records", "get-fitness-stats", "get-vo2max",
+    "get-hr-zones-config", "get-user-profile", "get-training-readiness",
+    "get-sleep-stats", "get-calendar", "get-goals", "get-badges",
+    "get-badge-leaderboard", "get-hydration", "get-power-zones", "list-workouts",
+    "get-workout", "download-workout-fit", "create-workout", "schedule-workout",
+    "delete-workout", "run-tests",
+]
+
+
+def cmd_run_tests(_args) -> int:
+    _out_json({"total": len(CAPABILITIES), "capabilities": CAPABILITIES})
+    return EXIT_OK
 
 
 def cmd_daily(args) -> int:
@@ -248,7 +376,72 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("activity_id", help="activity ID")
         p.set_defaults(func=cmd_activities)
 
-    p_daily = sub.add_parser("daily", help="daily wellness data")
+    ap = act_sub.add_parser("download-fit", help="download an activity's original FIT file")
+    ap.add_argument("activity_id")
+    ap.add_argument("--output-dir", default="./fit_files")
+    ap.set_defaults(func=cmd_activities)
+
+    p_fitness = sub.add_parser("fitness", help="fitness, recovery, calendar, and achievement data")
+    fitness_sub = p_fitness.add_subparsers(dest="fitness_cmd", required=True)
+
+    p = fitness_sub.add_parser("personal-records", help="personal records with history")
+    p.set_defaults(func=cmd_fitness)
+    p = fitness_sub.add_parser("stats", help="aggregated fitness stats")
+    p.add_argument("start_date")
+    p.add_argument("end_date")
+    p.add_argument("--aggregation", choices=("daily", "weekly", "monthly"), default="daily")
+    p.add_argument("--metric", choices=("duration", "distance", "calories"), default="duration")
+    p.set_defaults(func=cmd_fitness)
+    for name in ("vo2max", "training-readiness", "hydration"):
+        p = fitness_sub.add_parser(name)
+        p.add_argument("--date", help="YYYY-MM-DD (default: today)")
+        p.set_defaults(func=cmd_fitness)
+    for name in ("hr-zones", "badges", "power-zones"):
+        fitness_sub.add_parser(name).set_defaults(func=cmd_fitness)
+    p = fitness_sub.add_parser("sleep-stats")
+    p.add_argument("start_date")
+    p.add_argument("end_date")
+    p.set_defaults(func=cmd_fitness)
+    p = fitness_sub.add_parser("calendar")
+    p.add_argument("year", type=int)
+    p.add_argument("month", type=int, choices=range(12), help="zero-based month (0=January)")
+    p.set_defaults(func=cmd_fitness)
+    p = fitness_sub.add_parser("goals")
+    p.add_argument("--status", choices=("active", "future", "past"), default="active")
+    p.set_defaults(func=cmd_fitness)
+    p = fitness_sub.add_parser("badge-leaderboard")
+    p.add_argument("--limit", type=int, default=25)
+    p.set_defaults(func=cmd_fitness)
+
+    p_workouts = sub.add_parser("workouts", help="saved workout read/write operations")
+    workout_sub = p_workouts.add_subparsers(dest="workouts_cmd", required=True)
+    p = workout_sub.add_parser("list")
+    p.add_argument("--start", type=int, default=0)
+    p.add_argument("--limit", type=int, default=100)
+    p.set_defaults(func=cmd_workouts)
+    p = workout_sub.add_parser("get")
+    p.add_argument("workout_id")
+    p.set_defaults(func=cmd_workouts)
+    p = workout_sub.add_parser("download-fit")
+    p.add_argument("workout_id")
+    p.add_argument("--output-dir", default="./fit_files")
+    p.set_defaults(func=cmd_workouts)
+    p = workout_sub.add_parser("create")
+    source = p.add_mutually_exclusive_group(required=True)
+    source.add_argument("--file", help="path to workout JSON")
+    source.add_argument("--json", help="inline workout JSON")
+    p.set_defaults(func=cmd_workouts)
+    p = workout_sub.add_parser("schedule")
+    p.add_argument("workout_id")
+    p.add_argument("date")
+    p.set_defaults(func=cmd_workouts)
+    p = workout_sub.add_parser("delete")
+    p.add_argument("workout_id")
+    p.set_defaults(func=cmd_workouts)
+
+    sub.add_parser("run-tests", help="print the 41-capability verification plan").set_defaults(func=cmd_run_tests)
+
+    p_daily = sub.add_parser("daily", help="daily health data")
     daily_sub = p_daily.add_subparsers(dest="daily_cmd", required=True)
     for name, help_text in [
         ("summary", "daily summary (MCP: get-daily-summary)"),

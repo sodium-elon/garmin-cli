@@ -146,7 +146,8 @@ def get_user_profile(garmin: Garmin) -> dict:
 
 
 def get_display_name(garmin: Garmin) -> str:
-    name = get_user_profile(garmin).get("displayName")
+    profile = raw_get(garmin, "userprofile-service/userprofile/settings") or {}
+    name = profile.get("displayName")
     if not name:
         raise RuntimeError("displayName missing from user profile response")
     return str(name)
