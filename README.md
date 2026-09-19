@@ -43,6 +43,12 @@ garmin-cli --env-file /path/to/local.env auth login
 garmin-cli auth check
 ```
 
+For scheduled maintenance, `scripts/refresh-session-if-needed.sh` checks the
+saved session silently, rebuilds a missing project environment with
+`uv sync --frozen`, and performs at most one locked login attempt before
+verifying the new session. It prints only actionable failures, which makes it
+safe for script-only cron delivery.
+
 Env vars (file format `KEY=VALUE`):
 
 | Variable | Purpose |
