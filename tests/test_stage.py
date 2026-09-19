@@ -89,7 +89,7 @@ class TestStage(unittest.TestCase):
             },
         )
         # The four parity endpoints, exactly as garmin-mcp calls them
-        # (garth routes to connectapi.garmin.com; no connectapi/ prefix).
+        # (garminconnect routes to connectapi.garmin.com; no connectapi/ prefix).
         self.assertIn("/activitylist-service/activities/search/activities", fake.calls)
         self.assertIn("/activity-service/activity/23237542145", fake.calls)
         self.assertIn("/activity-service/activity/23237542145/splits", fake.calls)

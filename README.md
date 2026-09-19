@@ -7,10 +7,9 @@ consumers: coding agents (via skills), ops scripts, cron/systemd timers, and
 humans over ssh. See the CircleCI "MCP vs CLI" framing: CLIs for the inner
 loop, MCP for the outer loop — this repo is the inner loop.
 
-Built on [garminconnect](https://pypi.org/project/garminconnect/) /
-[garth](https://pypi.org/project/garth/) (pure-Python SSO — no Playwright, no
-Node). Note: garth is currently marked deprecated upstream; pinned and working,
-tracked as a maintenance risk.
+Built on [garminconnect](https://pypi.org/project/garminconnect/) (pure-Python
+SSO — no Playwright and no Node). Dependencies are resolved and hash-locked in
+`uv.lock`.
 
 ## Guarantees
 
@@ -26,9 +25,14 @@ tracked as a maintenance risk.
 ## Install
 
 ```bash
-uv venv && uv pip install -e .          # or: pip install .
+uv python install 3.13
+uv sync
 garmin-cli --help
 ```
+
+The repository pins Python 3.13 through `.python-version`; `uv sync` creates a
+clean project environment from `uv.lock`. Python 3.14 is intentionally excluded
+until the Garmin dependency stack supports it.
 
 ## Auth
 

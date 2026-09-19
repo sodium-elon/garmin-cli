@@ -362,8 +362,8 @@ def build_parser() -> argparse.ArgumentParser:
         prog="garmin-cli",
         description=(
             "CLI for Garmin Connect. Endpoint-compatible with garmin-mcp; "
-            "auth via garth OAuth tokens (email/password login + automatic "
-            "email-OTP MFA). Data on stdout as JSON, diagnostics on stderr. "
+            "Garmin OAuth authentication uses email/password login + automatic "
+            "email-OTP MFA. Data on stdout as JSON, diagnostics on stderr. "
             "Exit codes: 0 ok, 1 error, 2 usage, 75 auth required."
         ),
     )
@@ -377,7 +377,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--tokenstore",
         metavar="PATH",
-        help="garth token directory (default: $GARMIN_CLI_TOKENSTORE or ~/.garmin-cli/tokens)",
+        help="OAuth token directory (default: $GARMIN_CLI_TOKENSTORE or ~/.garmin-cli/tokens)",
     )
     parser.add_argument(
         "-v", "--verbose", action="store_true", help="log diagnostics to stderr"

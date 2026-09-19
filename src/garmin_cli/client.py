@@ -4,7 +4,7 @@ Data calls use the *exact same* connectapi paths and query parameters as
 garmin-mcp's ``src/tools.ts``, so responses (and therefore the staged-file
 format consumed by alpharunner's ``db:sync-garmin``) are drop-in compatible.
 
-Token store: garth-format OAuth tokens under ``~/.garmin-cli/tokens`` by
+Token store: garminconnect OAuth tokens under ``~/.garmin-cli/tokens`` by
 default (env ``GARMIN_CLI_TOKENSTORE``). Completely separate from garmin-mcp's
 ``~/.garmin-connect-mcp`` store; the MCP daemon is untouched by this CLI.
 """
@@ -86,7 +86,7 @@ def login_and_save() -> Garmin:
 
     The OTP waiter is armed BEFORE the login attempt starts (recording IMAP
     UIDNEXT first), mirroring garmin-mcp's arm-before-login design — Garmin
-    can deliver the OTP email before garth gets around to asking for the code.
+    can deliver the OTP email before the client asks for the code.
     """
     email, password = _credentials()
     if not email or not password:
@@ -131,7 +131,7 @@ def check_session(verbose: bool = False) -> dict:
 def raw_get(garmin: Garmin, path: str, params: dict | None = None):
     """GET a connectapi path with the same shape garmin-mcp's client uses.
 
-    garth's connectapi() routes to connectapi.garmin.com itself, so paths must
+    garminconnect's connectapi() routes to connectapi.garmin.com itself, so paths must
     NOT carry a "connectapi/" prefix (garmin-mcp's client.get takes the bare
     service path too — both end up at the same URL).
     """

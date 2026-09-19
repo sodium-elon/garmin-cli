@@ -3,7 +3,7 @@ name = "garmin-cli"
 version = "0.1.0"
 description = "CLI for Garmin Connect — inner-loop companion to garmin-mcp (Python, garminconnect)"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12,<3.14"
 license = { text = "MIT" }
 dependencies = [
     "garminconnect>=0.3.11",
